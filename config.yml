@@ -4,9 +4,9 @@ listen_addr: 0.0.0.0:8000
 base_path: /
 
 # Registry URL with schema and port.
-registry_url: https://docker-registry.local
+registry_url: http://localhost:5000
 # Verify TLS certificate when using https.
-verify_tls: true
+verify_tls: false
 
 # Docker registry credentials.
 # They need to have a full access to the registry.
@@ -14,8 +14,8 @@ verify_tls: true
 # will be used to obtain access tokens.
 # When the registry_password_file entry is used, the password can be passed as a docker secret 
 # and read from file. This overides the registry_password entry.
-registry_username: user
-registry_password: pass
+#registry_username: user
+#registry_password: pass
 # registry_password_file: /run/secrets/registry_password_file
 
 # Event listener token.
@@ -51,3 +51,14 @@ purge_tags_keep_count: 2
 # Example: '25 54 17 * * *' will run it at 17:54:25 daily.
 # Note, the cron schedule format includes seconds! See https://godoc.org/github.com/robfig/cron
 purge_tags_schedule: ''
+
+purge:
+  - repo_regex: 'test/.*' # Keep only 2 last tags in the /test/* repos
+    tags_regex: '.*'
+    tags_keep_days: 0
+    tags_keep_count: 1
+
+  - repo_regex: 'test2/.*' # Keep only 2 last tags in the /test/* repos
+    tags_regex: '.*-.*'
+    tags_keep_days: 0
+    tags_keep_count: 1

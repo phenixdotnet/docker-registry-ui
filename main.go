@@ -20,24 +20,25 @@ import (
 )
 
 type configData struct {
-	ListenAddr            string   `yaml:"listen_addr"`
-	BasePath              string   `yaml:"base_path"`
-	RegistryURL           string   `yaml:"registry_url"`
-	VerifyTLS             bool     `yaml:"verify_tls"`
-	Username              string   `yaml:"registry_username"`
-	Password              string   `yaml:"registry_password"`
-	PasswordFile          string   `yaml:"registry_password_file"`
-	EventListenerToken    string   `yaml:"event_listener_token"`
-	EventRetentionDays    int      `yaml:"event_retention_days"`
-	EventDatabaseDriver   string   `yaml:"event_database_driver"`
-	EventDatabaseLocation string   `yaml:"event_database_location"`
-	CacheRefreshInterval  uint8    `yaml:"cache_refresh_interval"`
-	AnyoneCanDelete       bool     `yaml:"anyone_can_delete"`
-	Admins                []string `yaml:"admins"`
-	Debug                 bool     `yaml:"debug"`
-	PurgeTagsKeepDays     int      `yaml:"purge_tags_keep_days"`
-	PurgeTagsKeepCount    int      `yaml:"purge_tags_keep_count"`
-	PurgeTagsSchedule     string   `yaml:"purge_tags_schedule"`
+	ListenAddr            string                 `yaml:"listen_addr"`
+	BasePath              string                 `yaml:"base_path"`
+	RegistryURL           string                 `yaml:"registry_url"`
+	VerifyTLS             bool                   `yaml:"verify_tls"`
+	Username              string                 `yaml:"registry_username"`
+	Password              string                 `yaml:"registry_password"`
+	PasswordFile          string                 `yaml:"registry_password_file"`
+	EventListenerToken    string                 `yaml:"event_listener_token"`
+	EventRetentionDays    int                    `yaml:"event_retention_days"`
+	EventDatabaseDriver   string                 `yaml:"event_database_driver"`
+	EventDatabaseLocation string                 `yaml:"event_database_location"`
+	CacheRefreshInterval  uint8                  `yaml:"cache_refresh_interval"`
+	AnyoneCanDelete       bool                   `yaml:"anyone_can_delete"`
+	Admins                []string               `yaml:"admins"`
+	Debug                 bool                   `yaml:"debug"`
+	PurgeTagsKeepDays     int                    `yaml:"purge_tags_keep_days"`
+	PurgeTagsKeepCount    int                    `yaml:"purge_tags_keep_count"`
+	PurgeTagsSchedule     string                 `yaml:"purge_tags_schedule"`
+	PurgeTagsConfig       []registry.PurgeConfig `yaml:"purge"`
 }
 
 type template struct {
@@ -301,5 +302,5 @@ func (a *apiClient) receiveEvents(c echo.Context) error {
 
 // purgeOldTags purges old tags.
 func (a *apiClient) purgeOldTags(dryRun bool) {
-	registry.PurgeOldTags(a.client, dryRun, a.config.PurgeTagsKeepDays, a.config.PurgeTagsKeepCount)
+	registry.PurgeOldTags(a.client, dryRun, a.config.PurgeTagsKeepDays, a.config.PurgeTagsKeepCount, a.config.PurgeTagsConfig)
 }
