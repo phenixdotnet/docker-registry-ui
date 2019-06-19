@@ -10,12 +10,16 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-/*PurgeConfig represent the configuration for tag purge */
-type PurgeConfig struct {
-	RepoRegex     string `yaml:"repo_regex"`
+type TagConfig struct {
 	TagsRegex     string `yaml:"tags_regex"`
 	TagsKeepDays  int    `yaml:"tags_keep_days"`
 	TagsKeepCount int    `yaml:"tags_keep_count"`
+}
+
+/*PurgeConfig represent the configuration for tag purge */
+type PurgeConfig struct {
+	RepoRegex string      `yaml:"repo_regex"`
+	Tags      []TagConfig `yaml:"tags"`
 }
 
 type tagData struct {
@@ -45,14 +49,18 @@ func (p timeSlice) Swap(i, j int) {
 func PurgeOldTags(client *Client, purgeDryRun bool, purgeTagsKeepDays, purgeTagsKeepCount int, purgeTagsConfig []PurgeConfig) {
 	logger := SetupLogging("registry.tasks.PurgeOldTags")
 	// Reduce client logging.
-	//client.logger.SetLevel(logging.LevelError)
+	client.logger.SetLevel(logging.LevelError)
+	logger.SetLevel(logging.LevelDebug)
 
 	// Add the global configuration at the end of purgeTagsConfig to use it when no other rule match
 	purgeTagsConfig = append(purgeTagsConfig, PurgeConfig{
-		RepoRegex:     ".*",
-		TagsRegex:     ".*",
-		TagsKeepDays:  purgeTagsKeepDays,
-		TagsKeepCount: purgeTagsKeepCount,
+		RepoRegex: ".*",
+		Tags: []TagConfig{TagConfig{
+			TagsRegex:     ".*",
+			TagsKeepDays:  purgeTagsKeepDays,
+			TagsKeepCount: purgeTagsKeepCount,
+		},
+		},
 	})
 
 	dryRunText := ""
@@ -76,9 +84,8 @@ func PurgeOldTags(client *Client, purgeDryRun bool, purgeTagsKeepDays, purgeTags
 }
 
 func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig []PurgeConfig, now time.Time, purgeDryRun bool, dryRunText string, logger logging.Logger) {
-	tagsFromRepo := timeSlice{}
-	purgeTags := []string{}
-	keepTags := []string{}
+	tagsFromRepo := map[TagConfig]timeSlice{}
+
 	count := 0
 	var purgeConfig *PurgeConfig
 
@@ -89,7 +96,7 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 	logger.Infof("[%s] Processing repo %s", repo, repo)
 
 	for _, config := range purgeTagsConfig {
-		logger.Infof("[%s] Repo regex: %s", repo, config.RepoRegex)
+		logger.Debugf("[%s] Repo regex: %s", repo, config.RepoRegex)
 		re, err := regexp.Compile(config.RepoRegex)
 		if err != nil {
 			logger.Warnf("[%s] Skipping repo because regex don't compile: %s", repo, err)
@@ -115,15 +122,24 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 
 	for _, tag := range tags {
 
-		logger.Infof("[%s] Checking if tag '%s' match the tag regex: %s", repo, tag, purgeConfig.TagsRegex)
-		re, err := regexp.Compile(purgeConfig.TagsRegex)
-		if err != nil {
-			logger.Warnf("[%s] Skipping tag %s because regex don't compile: %s", repo, tag, err)
-			return
+		var selectedTagConfig *TagConfig
+		for _, tagConfig := range purgeConfig.Tags {
+			logger.Debugf("[%s] Checking if tag '%s' match the tag regex: %s", repo, tag, tagConfig.TagsRegex)
+			re, err := regexp.Compile(tagConfig.TagsRegex)
+			if err != nil {
+				logger.Warnf("[%s] Skipping tag %s because regex don't compile: %s", repo, tag, err)
+				return
+			}
+			matchIndexes := re.FindStringIndex(tag)
+			if matchIndexes != nil {
+				logger.Infof("[%s] tag %s match the regex %s", repo, tag, tagConfig.TagsRegex)
+				selectedTagConfig = &tagConfig
+				break
+			}
 		}
-		matchIndexes := re.FindStringIndex(tag)
-		if matchIndexes == nil {
-			logger.Infof("[%s] Skipping tag %s because it doesn't match the regex %s", repo, tag, purgeConfig.TagsRegex)
+
+		if selectedTagConfig == nil {
+			logger.Infof("[%s] Skipping tag %s because it doesn't match any regex", repo, tag)
 			continue
 		}
 
@@ -133,36 +149,47 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 			continue
 		}
 		created := gjson.Get(gjson.Get(infoV1, "history.0.v1Compatibility").String(), "created").Time()
-		tagsFromRepo = append(tagsFromRepo, tagData{name: tag, created: created})
+		tagsFromRepo[*selectedTagConfig] = append(tagsFromRepo[*selectedTagConfig], tagData{name: tag, created: created})
 	}
 
-	// Sort tags by "created" from newest to oldest.
-	sortedTags := make(timeSlice, 0, len(tagsFromRepo))
-	for _, d := range tagsFromRepo {
-		sortedTags = append(sortedTags, d)
-	}
-	sort.Sort(sortedTags)
-	tagsFromRepo = sortedTags
+	purgeTags := []string{}
+	keepTags := []string{}
 
-	// Filter out tags by retention days.
-	for _, tag := range tagsFromRepo {
-		delta := int(now.Sub(tag.created).Hours() / 24)
-		if delta > purgeConfig.TagsKeepDays {
-			purgeTags = append(purgeTags, tag.name)
-		} else {
-			keepTags = append(keepTags, tag.name)
+	for tagConfig, tags := range tagsFromRepo {
+		purgeTagsForThisConfig := []string{}
+		keepTagsForThisConfig := []string{}
+
+		// Sort tags by "created" from newest to oldest.
+		sortedTags := make(timeSlice, 0, len(tagsFromRepo))
+		for _, d := range tags {
+			sortedTags = append(sortedTags, d)
 		}
-	}
+		sort.Sort(sortedTags)
+		tagsFromRepo[tagConfig] = sortedTags
 
-	// Keep minimal count of tags no matter how old they are.
-	if len(tagsFromRepo)-len(purgeTags) < purgeConfig.TagsKeepCount {
-		if len(purgeTags) > purgeConfig.TagsKeepCount {
-			keepTags = append(keepTags, purgeTags[:purgeConfig.TagsKeepCount]...)
-			purgeTags = purgeTags[purgeConfig.TagsKeepCount:]
-		} else {
-			keepTags = append(keepTags, purgeTags...)
-			purgeTags = []string{}
+		// Filter out tags by retention days.
+		for _, tag := range tags {
+			delta := int(now.Sub(tag.created).Hours() / 24)
+			if delta > tagConfig.TagsKeepDays {
+				purgeTagsForThisConfig = append(purgeTagsForThisConfig, tag.name)
+			} else {
+				keepTagsForThisConfig = append(keepTagsForThisConfig, tag.name)
+			}
 		}
+
+		// Keep minimal count of tags no matter how old they are.
+		if len(tags)-len(purgeTagsForThisConfig) < tagConfig.TagsKeepCount {
+			if len(purgeTagsForThisConfig) > tagConfig.TagsKeepCount {
+				keepTagsForThisConfig = append(keepTagsForThisConfig, purgeTagsForThisConfig[:tagConfig.TagsKeepCount]...)
+				purgeTagsForThisConfig = purgeTagsForThisConfig[tagConfig.TagsKeepCount:]
+			} else {
+				keepTagsForThisConfig = append(keepTagsForThisConfig, purgeTagsForThisConfig...)
+				purgeTagsForThisConfig = []string{}
+			}
+		}
+
+		purgeTags = append(purgeTags, purgeTagsForThisConfig...)
+		keepTags = append(keepTags, keepTagsForThisConfig...)
 	}
 
 	count = count + len(purgeTags)
@@ -175,13 +202,13 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 		logger.Info("Purging old tags...")
 	}
 
-	for _, repo := range purgeTags {
+	for _, tag := range purgeTags {
 		logger.Infof("[%s] Purging %d tags... %s", repo, len(purgeTags), dryRunText)
 		if purgeDryRun {
+			logger.Debugf("[%s] Should purge %s:%s", repo, repo, tag)
 			continue
 		}
-		for _, tag := range purgeTags {
-			client.DeleteTag(repo, tag)
-		}
+
+		client.DeleteTag(repo, tag)
 	}
 }
