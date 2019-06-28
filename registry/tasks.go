@@ -160,7 +160,7 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 		keepTagsForThisConfig := []string{}
 
 		// Sort tags by "created" from newest to oldest.
-		sortedTags := make(timeSlice, 0, len(tagsFromRepo))
+		sortedTags := make(timeSlice, 0, len(tags))
 		for _, d := range tags {
 			sortedTags = append(sortedTags, d)
 		}
@@ -168,7 +168,7 @@ func analyzeRepo(client *Client, namespace string, repo string, purgeTagsConfig 
 		tagsFromRepo[tagConfig] = sortedTags
 
 		// Filter out tags by retention days.
-		for _, tag := range tags {
+		for _, tag := range sortedTags {
 			delta := int(now.Sub(tag.created).Hours() / 24)
 			if delta > tagConfig.TagsKeepDays {
 				purgeTagsForThisConfig = append(purgeTagsForThisConfig, tag.name)
