@@ -10,6 +10,7 @@ import (
 
 	"github.com/hhkbp2/go-logging"
 	"github.com/quiq/docker-registry-ui/registry"
+
 	// 🐒 patching of "database/sql".
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/mattn/go-sqlite3"
@@ -35,6 +36,7 @@ type EventListener struct {
 	databaseDriver   string
 	databaseLocation string
 	retention        int
+	eventDeletion    bool
 	logger           logging.Logger
 }
 
@@ -54,11 +56,12 @@ type EventRow struct {
 }
 
 // NewEventListener initialize EventListener.
-func NewEventListener(databaseDriver, databaseLocation string, retention int) *EventListener {
+func NewEventListener(databaseDriver, databaseLocation string, retention int, eventDeletion bool) *EventListener {
 	return &EventListener{
 		databaseDriver:   databaseDriver,
 		databaseLocation: databaseLocation,
 		retention:        retention,
+		eventDeletion:    eventDeletion,
 		logger:           registry.SetupLogging("events.event_listener"),
 	}
 }
@@ -74,7 +77,7 @@ func (e *EventListener) ProcessEvents(request *http.Request) {
 	e.logger.Debugf("Received event: %+v", t)
 	j, _ := json.Marshal(t)
 
-	db, err := e.getDababaseHandler()
+	db, err := e.getDatabaseHandler()
 	if err != nil {
 		e.logger.Error(err)
 		return
@@ -112,6 +115,9 @@ func (e *EventListener) ProcessEvents(request *http.Request) {
 	}
 
 	// Purge old records.
+	if !e.eventDeletion {
+		return
+	}
 	var res sql.Result
 	if e.databaseDriver == "mysql" {
 		stmt, _ := db.Prepare("DELETE FROM events WHERE created < DATE_SUB(NOW(), INTERVAL ? DAY)")
@@ -128,7 +134,7 @@ func (e *EventListener) ProcessEvents(request *http.Request) {
 func (e *EventListener) GetEvents(repository string) []EventRow {
 	var events []EventRow
 
-	db, err := e.getDababaseHandler()
+	db, err := e.getDatabaseHandler()
 	if err != nil {
 		e.logger.Error(err)
 		return events
@@ -154,7 +160,7 @@ func (e *EventListener) GetEvents(repository string) []EventRow {
 	return events
 }
 
-func (e *EventListener) getDababaseHandler() (*sql.DB, error) {
+func (e *EventListener) getDatabaseHandler() (*sql.DB, error) {
 	firstRun := false
 	schema := schemaSQLite
 	if e.databaseDriver == "sqlite3" {
